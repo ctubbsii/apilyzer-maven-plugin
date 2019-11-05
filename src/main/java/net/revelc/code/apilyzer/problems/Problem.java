@@ -12,15 +12,21 @@
  * limitations under the License.
  */
 
-package net.revelc.code.apilyzer;
+package net.revelc.code.apilyzer.problems;
 
-import java.util.function.Consumer;
-import net.revelc.code.apilyzer.problems.Problem;
+public class Problem {
 
-public class Apilyzer {
+  public final String problemType;
+  public final Class<?> contextClass;
+  public final String memberName;
+  public final Class<?> nonPublicType;
 
-  public Apilyzer(Consumer<Problem> problemConsumer) {
-
+  Problem(ProblemType problemType, Class<?> contextClass, String memberName,
+      Class<?> nonPublicType) {
+    this.problemType = problemType.name();
+    this.contextClass = contextClass;
+    this.memberName = memberName;
+    this.nonPublicType = nonPublicType;
   }
 
 }

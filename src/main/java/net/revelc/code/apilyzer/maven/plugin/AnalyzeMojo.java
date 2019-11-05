@@ -37,7 +37,7 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
-import net.revelc.code.apilyzer.problems.ProblemType;
+import net.revelc.code.apilyzer.problems.ProblemReporter;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -246,22 +246,22 @@ public class AnalyzeMojo extends AbstractMojo {
   private PatternSet excludeAnnotationsPs;
 
   private static final String FORMAT = "  %-20s %-60s %-35s %s\n";
+  private AtomicLong problemCount = new AtomicLong(0);
+  private ProblemReporter problem;
 
   @Override
   public void execute() throws MojoFailureException, MojoExecutionException {
+
+    if (skip) {
+      getLog().info("APILyzer execution skipped");
+      return;
+    }
 
     includesPs = new PatternSet(includes);
     excludesPs = new PatternSet(excludes);
     includeAnnotationsPs = new PatternSet(includeAnnotations);
     excludeAnnotationsPs = new PatternSet(excludeAnnotations);
     allowsPs = new PatternSet(allows);
-
-    AtomicLong counter = new AtomicLong(0);
-
-    if (skip) {
-      getLog().info("APILyzer execution skipped");
-      return;
-    }
 
     ClassPath classPath;
     try {
@@ -271,6 +271,11 @@ public class AnalyzeMojo extends AbstractMojo {
     }
 
     try (PrintStream out = new PrintStream(new File(outputFile))) {
+      problem = new ProblemReporter(problem -> {
+        problemCount.incrementAndGet();
+        out.printf(FORMAT, problem.problemType, problem.contextClass.getName(), problem.memberName,
+            problem.nonPublicType.getName());
+      });
 
       out.println("Includes: " + includes);
       out.println("IncludeAnnotations: " + includeAnnotations);
@@ -301,20 +306,21 @@ public class AnalyzeMojo extends AbstractMojo {
       out.println();
       // look for public API methods/fields/subclasses that use classes not in public API
       for (Class<?> clazz : publicApiClasses) {
-        checkClass(clazz, publicSet, out, counter);
+        checkClass(clazz, publicSet, out);
       }
 
-      out.println();
-      out.println("Total : " + counter.get());
+      long counter = this.problemCount.get();
 
-      String msg =
-          "APILyzer found " + counter.get() + " problem" + (counter.get() == 1 ? "" : "s") + ".";
+      out.println();
+      out.println("Total : " + counter);
+
+      String msg = "APILyzer found " + counter + " problem" + (counter == 1 ? "" : "s") + ".";
       msg += " See " + outputFile + " for details.";
-      if (counter.get() < 0) {
+      if (counter < 0) {
         throw new AssertionError("Inconceivable!");
-      } else if (counter.get() == 0) {
+      } else if (counter == 0) {
         getLog().info(msg);
-      } else if (counter.get() > 0 && ignoreProblems) {
+      } else if (counter > 0 && ignoreProblems) {
         getLog().warn(msg);
       } else {
         getLog().error(msg);
@@ -478,13 +484,12 @@ public class AnalyzeMojo extends AbstractMojo {
     return classes;
   }
 
-  private boolean checkClass(Class<?> clazz, Set<String> publicSet, PrintStream out,
-      AtomicLong counter) {
-    return checkClass(clazz, publicSet, out, counter, new HashSet<Class<?>>());
+  private void checkClass(Class<?> clazz, Set<String> publicSet, PrintStream out) {
+    checkClass(clazz, publicSet, out, new HashSet<Class<?>>());
   }
 
   private boolean checkClass(Class<?> clazz, Set<String> publicSet, PrintStream out,
-      AtomicLong counter, Set<Class<?>> innerChecked) {
+      Set<Class<?>> innerChecked) {
 
     boolean ok = true;
 
@@ -507,7 +512,7 @@ public class AnalyzeMojo extends AbstractMojo {
       }
 
       if (!isOk(publicSet, field.getType())) {
-        problem(out, counter, ProblemType.FIELD, clazz, field.getName(), field.getType().getName());
+        problem.field(out, clazz, field);
         ok = false;
       }
     }
@@ -526,7 +531,7 @@ public class AnalyzeMojo extends AbstractMojo {
       Class<?>[] params = constructor.getParameterTypes();
       for (Class<?> param : params) {
         if (!isOk(publicSet, param)) {
-          problem(out, counter, ProblemType.CTOR_PARAM, clazz, "(...)", param.getName());
+          problem.constructorParameter(out, clazz, param);
           ok = false;
         }
       }
@@ -534,8 +539,7 @@ public class AnalyzeMojo extends AbstractMojo {
       Class<?>[] exceptions = constructor.getExceptionTypes();
       for (Class<?> exception : exceptions) {
         if (!isOk(publicSet, exception)) {
-          problem(out, counter, ProblemType.CTOR_EXCEPTION, clazz, "(...) throws",
-              exception.getName());
+          problem.constructorException(out, clazz, exception);
           ok = false;
         }
       }
@@ -557,16 +561,14 @@ public class AnalyzeMojo extends AbstractMojo {
       }
 
       if (!isOk(publicSet, method.getReturnType())) {
-        problem(out, counter, ProblemType.METHOD_RETURN, clazz, method.getName() + "(...)",
-            method.getReturnType().getName());
+        problem.methodReturn(out, clazz, method);
         ok = false;
       }
 
       Class<?>[] params = method.getParameterTypes();
       for (Class<?> param : params) {
         if (!isOk(publicSet, param)) {
-          problem(out, counter, ProblemType.METHOD_PARAM, clazz, method.getName() + "(...)",
-              param.getName());
+          problem.methodParameter(out, clazz, method, param);
           ok = false;
         }
       }
@@ -574,8 +576,7 @@ public class AnalyzeMojo extends AbstractMojo {
       Class<?>[] exceptions = method.getExceptionTypes();
       for (Class<?> exception : exceptions) {
         if (!isOk(publicSet, exception)) {
-          problem(out, counter, ProblemType.METHOD_EXCEPTION, clazz,
-              method.getName() + "(...) throws", exception.getName());
+          problem.methodException(out, clazz, method, exception);
           ok = false;
         }
       }
@@ -599,8 +600,8 @@ public class AnalyzeMojo extends AbstractMojo {
         continue;
       }
 
-      if (!isOk(publicSet, class1) && !checkClass(class1, publicSet, out, counter, innerChecked)) {
-        problem(out, counter, ProblemType.INNER_CLASS, clazz, "N/A", class1.getName());
+      if (!isOk(publicSet, class1) && !checkClass(class1, publicSet, out, innerChecked)) {
+        problem.innerClass(out, clazz, class1);
         ok = false;
       }
     }
@@ -612,9 +613,4 @@ public class AnalyzeMojo extends AbstractMojo {
     return (clazz.getModifiers() & (Modifier.PUBLIC | Modifier.PROTECTED)) != 0;
   }
 
-  private void problem(PrintStream out, AtomicLong counter, ProblemType type, Class<?> clazz,
-      String member, String problemRef) {
-    counter.incrementAndGet();
-    out.printf(FORMAT, type, clazz.getName(), member, problemRef);
-  }
 }

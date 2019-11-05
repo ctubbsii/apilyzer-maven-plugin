@@ -22,32 +22,32 @@ public enum ProblemType {
   INNER_CLASS,
 
   /**
-   * A method parameter type isn't in the public API or in the allowed set.
+   * A method parameter's type isn't in the public API or in the allowed set.
    */
   METHOD_PARAM,
 
   /**
-   * A method return type isn't in the public API or in the allowed set.
+   * A method's return type isn't in the public API or in the allowed set.
    */
   METHOD_RETURN,
 
   /**
-   * A member type isn't in the public API or in the allowed set.
+   * A field's type isn't in the public API or in the allowed set.
    */
   FIELD,
 
   /**
-   * A constructor parameter type isn't in the public API or in the allowed set.
+   * A constructor parameter's type isn't in the public API or in the allowed set.
    */
   CTOR_PARAM,
 
   /**
-   * A constructor's declared exception type isn't in the public API or in the allowed set.
+   * A constructor exception's type isn't in the public API or in the allowed set.
    */
   CTOR_EXCEPTION,
 
   /**
-   * A method's declared exception type isn't in the public API or in the allowed set.
+   * A method exception's type isn't in the public API or in the allowed set.
    */
   METHOD_EXCEPTION
 
