@@ -20,16 +20,13 @@ import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.io.PrintStream;
 import java.lang.annotation.Annotation;
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Field;
-import java.lang.reflect.Method;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.List;
-import java.util.Set;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.function.Consumer;
 import net.revelc.code.apilyzer.Apilyzer;
 import net.revelc.code.apilyzer.PublicApi;
+import net.revelc.code.apilyzer.problems.Problem;
 import net.revelc.code.apilyzer.util.ClassUtils;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.AbstractMojo;
@@ -233,11 +230,7 @@ public class AnalyzeMojo extends AbstractMojo {
   @Parameter(alias = "excludeAnnotations")
   private List<String> excludeAnnotations = Collections.emptyList();
 
-  private static final String FORMAT = "  %-20s %-60s %-35s %s\n";
-  private AtomicLong problemCount = new AtomicLong(0);
-  private Apilyzer apilyzer;
-
-  private PatternSet allowsPs;
+  private static final String FORMAT = "  %-20s %-60s %-35s %s%n";
 
   @Override
   public void execute() throws MojoFailureException, MojoExecutionException {
@@ -247,8 +240,6 @@ public class AnalyzeMojo extends AbstractMojo {
       return;
     }
 
-    allowsPs = new PatternSet(allows);
-
     ClassPath classPath;
     try {
       classPath = ClassUtils.getClassPath(project.getCompileClasspathElements());
@@ -257,11 +248,6 @@ public class AnalyzeMojo extends AbstractMojo {
     }
 
     try (PrintStream out = new PrintStream(new File(outputFile))) {
-      apilyzer = new Apilyzer(problem -> {
-        problemCount.incrementAndGet();
-        out.printf(FORMAT, problem.problemType, problem.contextClass.getName(), problem.memberName,
-            problem.nonPublicType.getName());
-      });
 
       out.println("Includes: " + includes);
       out.println("IncludeAnnotations: " + includeAnnotations);
@@ -283,24 +269,31 @@ public class AnalyzeMojo extends AbstractMojo {
       out.println("Problems : ");
       out.println();
       out.printf(FORMAT, "CONTEXT", "TYPE", "FIELD/METHOD", "NON-PUBLIC REFERENCE");
-
       out.println();
+
+      AtomicLong problemCounter = new AtomicLong(0);
+
       // look for public API methods/fields/subclasses that use classes not in public API
-      // TODO apilyzer.check(publicApi);
-      publicApi.classStream().forEach(c -> checkClass(c, publicApi, new HashSet<Class<?>>()));
+      Consumer<Problem> problemConsumer = problem -> {
+        problemCounter.incrementAndGet();
+        out.printf(FORMAT, problem.problemType, problem.contextClass.getName(), problem.memberName,
+            problem.nonPublicType.getName());
+      };
+      new Apilyzer(publicApi, allows, ignoreDeprecated, problemConsumer).check();
 
-      long counter = this.problemCount.get();
+      long problemCount = problemCounter.get();
 
       out.println();
-      out.println("Total : " + counter);
+      out.println("Total : " + problemCount);
 
-      String msg = "APILyzer found " + counter + " problem" + (counter == 1 ? "" : "s") + ".";
+      String msg =
+          "APILyzer found " + problemCount + " problem" + (problemCount == 1 ? "" : "s") + ".";
       msg += " See " + outputFile + " for details.";
-      if (counter < 0) {
+      if (problemCount < 0) {
         throw new AssertionError("Inconceivable!");
-      } else if (counter == 0) {
+      } else if (problemCount == 0) {
         getLog().info(msg);
-      } else if (counter > 0 && ignoreProblems) {
+      } else if (problemCount > 0 && ignoreProblems) {
         getLog().warn(msg);
       } else {
         getLog().error(msg);
@@ -309,153 +302,6 @@ public class AnalyzeMojo extends AbstractMojo {
     } catch (FileNotFoundException e) {
       throw new MojoExecutionException("Bad configuration: cannot create specified outputFile", e);
     }
-  }
-
-  private boolean isOk(PublicApi publicApi, Class<?> clazz) {
-
-    while (clazz.isArray()) {
-      clazz = clazz.getComponentType();
-    }
-
-    if (clazz.isPrimitive()) {
-      return true;
-    }
-
-    String fqName = clazz.getName();
-
-    if (publicApi.contains(fqName)) {
-      return true;
-    }
-
-    // TODO make default allows configurable
-    if (fqName.startsWith("java.")) {
-      return true;
-    }
-
-    if (allowsPs.anyMatch(fqName)) {
-      return true;
-    }
-
-    return false;
-  }
-
-  private boolean checkClass(Class<?> clazz, PublicApi publicApi, Set<Class<?>> innerChecked) {
-
-    boolean ok = true;
-
-    // TODO make configurable
-    if (ignoreDeprecated && clazz.isAnnotationPresent(Deprecated.class)) {
-      return true;
-    }
-
-    // TODO check generic type parameters
-
-    for (Field field : ClassUtils.getFields(clazz)) {
-
-      if (ignoreDeprecated && field.isAnnotationPresent(Deprecated.class)) {
-        continue;
-      }
-
-      if (!field.getDeclaringClass().getName().equals(clazz.getName())
-          && isOk(publicApi, field.getDeclaringClass())) {
-        continue;
-      }
-
-      if (!isOk(publicApi, field.getType())) {
-        apilyzer.problemReporter().field(clazz, field);
-        ok = false;
-      }
-    }
-
-    Constructor<?>[] constructors = clazz.getConstructors();
-    for (Constructor<?> constructor : constructors) {
-
-      if (constructor.isSynthetic()) {
-        continue;
-      }
-
-      if (ignoreDeprecated && constructor.isAnnotationPresent(Deprecated.class)) {
-        continue;
-      }
-
-      Class<?>[] params = constructor.getParameterTypes();
-      for (Class<?> param : params) {
-        if (!isOk(publicApi, param)) {
-          apilyzer.problemReporter().constructorParameter(clazz, param);
-          ok = false;
-        }
-      }
-
-      Class<?>[] exceptions = constructor.getExceptionTypes();
-      for (Class<?> exception : exceptions) {
-        if (!isOk(publicApi, exception)) {
-          apilyzer.problemReporter().constructorException(clazz, exception);
-          ok = false;
-        }
-      }
-    }
-
-    for (Method method : ClassUtils.getMethods(clazz)) {
-
-      if (method.isSynthetic() || method.isBridge()) {
-        continue;
-      }
-
-      if (ignoreDeprecated && method.isAnnotationPresent(Deprecated.class)) {
-        continue;
-      }
-
-      if (!method.getDeclaringClass().getName().equals(clazz.getName())
-          && isOk(publicApi, method.getDeclaringClass())) {
-        continue;
-      }
-
-      if (!isOk(publicApi, method.getReturnType())) {
-        apilyzer.problemReporter().methodReturn(clazz, method);
-        ok = false;
-      }
-
-      Class<?>[] params = method.getParameterTypes();
-      for (Class<?> param : params) {
-        if (!isOk(publicApi, param)) {
-          apilyzer.problemReporter().methodParameter(clazz, method, param);
-          ok = false;
-        }
-      }
-
-      Class<?>[] exceptions = method.getExceptionTypes();
-      for (Class<?> exception : exceptions) {
-        if (!isOk(publicApi, exception)) {
-          apilyzer.problemReporter().methodException(clazz, method, exception);
-          ok = false;
-        }
-      }
-    }
-
-    for (Class<?> class1 : ClassUtils.getInnerClasses(clazz)) {
-
-      if (innerChecked.contains(class1)) {
-        continue;
-      }
-
-      innerChecked.add(class1);
-
-      if (ignoreDeprecated && class1.isAnnotationPresent(Deprecated.class)) {
-        continue;
-      }
-
-      if (publicApi.excludes(class1)) {
-        // this inner class is explicitly excluded from API so do not check it
-        continue;
-      }
-
-      if (!isOk(publicApi, class1) && !checkClass(class1, publicApi, innerChecked)) {
-        apilyzer.problemReporter().innerClass(clazz, class1);
-        ok = false;
-      }
-    }
-
-    return ok;
   }
 
 }

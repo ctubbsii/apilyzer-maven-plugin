@@ -22,7 +22,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.TreeSet;
 import java.util.stream.Stream;
-import net.revelc.code.apilyzer.maven.plugin.PatternSet;
 import net.revelc.code.apilyzer.util.ClassUtils;
 
 public class PublicApi {
@@ -107,15 +106,15 @@ public class PublicApi {
         .anyMatch(annotation -> excludeAnnotationsPs.anyMatch(annotation.toString()));
   }
 
-  public Stream<Class<?>> classStream() {
+  Stream<Class<?>> classStream() {
     return publicApiClasses.stream();
   }
 
-  public boolean contains(String fqName) {
+  boolean contains(String fqName) {
     return publicSet.contains(fqName);
   }
 
-  public boolean excludes(Class<?> classToCheck) {
+  boolean excludes(Class<?> classToCheck) {
     return excludesPs.anyMatch(classToCheck.getName())
         || annotationExcludes(classToCheck.getDeclaredAnnotations());
   }

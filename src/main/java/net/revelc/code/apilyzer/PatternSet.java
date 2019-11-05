@@ -12,26 +12,26 @@
  * limitations under the License.
  */
 
-package net.revelc.code.apilyzer.maven.plugin;
+package net.revelc.code.apilyzer;
 
 import java.util.Collections;
 import java.util.List;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-public class PatternSet {
+class PatternSet {
   private final List<Pattern> patterns;
 
-  public PatternSet(List<String> regexs) {
+  PatternSet(List<String> regexs) {
     patterns = regexs.isEmpty() ? Collections.emptyList()
         : regexs.stream().map(Pattern::compile).collect(Collectors.toList());
   }
 
-  public boolean anyMatch(String input) {
+  boolean anyMatch(String input) {
     return patterns.stream().anyMatch(p -> p.matcher(input).matches());
   }
 
-  public boolean isEmpty() {
+  boolean isEmpty() {
     return patterns.isEmpty();
   }
 }
