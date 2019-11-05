@@ -14,9 +14,15 @@
 
 package net.revelc.code.apilyzer.util;
 
+import com.google.common.reflect.ClassPath;
+import java.io.File;
+import java.io.IOException;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.net.MalformedURLException;
+import java.net.URL;
+import java.net.URLClassLoader;
 import java.util.Arrays;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -26,6 +32,20 @@ public class ClassUtils {
 
   private ClassUtils() {
     // do not permit instantiation
+  }
+
+  /**
+   * Construct a class path object from a list of local file system paths.
+   */
+  public static ClassPath getClassPath(List<String> paths) throws IOException {
+    URL[] urls = paths.stream().map(path -> {
+      try {
+        return new File(path).toURI().toURL();
+      } catch (MalformedURLException e) {
+        throw new IllegalArgumentException("Unable to convert string (" + path + ") to URL", e);
+      }
+    }).collect(Collectors.toList()).toArray(new URL[0]);
+    return ClassPath.from(new URLClassLoader(urls, null));
   }
 
   public static boolean isPublicOrProtected(Class<?> clazz) {

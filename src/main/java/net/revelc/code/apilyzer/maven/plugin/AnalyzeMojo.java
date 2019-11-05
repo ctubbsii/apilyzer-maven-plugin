@@ -15,7 +15,6 @@
 package net.revelc.code.apilyzer.maven.plugin;
 
 import com.google.common.reflect.ClassPath;
-import com.google.common.reflect.ClassPath.ClassInfo;
 import java.io.File;
 import java.io.FileNotFoundException;
 import java.io.IOException;
@@ -24,19 +23,13 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.net.MalformedURLException;
-import java.net.URL;
-import java.net.URLClassLoader;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicLong;
-import java.util.stream.Collectors;
 import net.revelc.code.apilyzer.Apilyzer;
+import net.revelc.code.apilyzer.PublicApi;
 import net.revelc.code.apilyzer.util.ClassUtils;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.AbstractMojo;
@@ -244,11 +237,7 @@ public class AnalyzeMojo extends AbstractMojo {
   private AtomicLong problemCount = new AtomicLong(0);
   private Apilyzer apilyzer;
 
-  private PatternSet includesPs;
-  private PatternSet excludesPs;
   private PatternSet allowsPs;
-  private PatternSet includeAnnotationsPs;
-  private PatternSet excludeAnnotationsPs;
 
   @Override
   public void execute() throws MojoFailureException, MojoExecutionException {
@@ -258,15 +247,11 @@ public class AnalyzeMojo extends AbstractMojo {
       return;
     }
 
-    includesPs = new PatternSet(includes);
-    excludesPs = new PatternSet(excludes);
-    includeAnnotationsPs = new PatternSet(includeAnnotations);
-    excludeAnnotationsPs = new PatternSet(excludeAnnotations);
     allowsPs = new PatternSet(allows);
 
     ClassPath classPath;
     try {
-      classPath = getClassPath();
+      classPath = ClassUtils.getClassPath(project.getCompileClasspathElements());
     } catch (IOException | DependencyResolutionRequiredException | IllegalArgumentException e) {
       throw new MojoExecutionException("Error resolving project classpath", e);
     }
@@ -284,17 +269,16 @@ public class AnalyzeMojo extends AbstractMojo {
       out.println("Excludes: " + excludes);
       out.println("Allowed: " + allows);
 
-      List<Class<?>> publicApiClasses = new ArrayList<>();
-      TreeSet<String> publicSet = new TreeSet<>();
-      buildPublicSet(classPath, publicApiClasses, publicSet);
+      PublicApi publicApi = PublicApi.fromClassPath(classPath, includes, excludes,
+          includeAnnotations, excludeAnnotations);
 
-      if (publicSet.size() == 0) {
+      if (publicApi.isEmpty()) {
         throw new MojoExecutionException("No public API types were matched");
       }
 
       out.println();
       out.println("Public API:");
-      publicSet.stream().map(item -> "  " + item).forEach(out::println);
+      publicApi.nameStream().map(item -> "  " + item).forEach(out::println);
       out.println();
       out.println("Problems : ");
       out.println();
@@ -302,9 +286,8 @@ public class AnalyzeMojo extends AbstractMojo {
 
       out.println();
       // look for public API methods/fields/subclasses that use classes not in public API
-      for (Class<?> clazz : publicApiClasses) {
-        checkClass(clazz, publicSet, out);
-      }
+      // TODO apilyzer.check(publicApi);
+      publicApi.classStream().forEach(c -> checkClass(c, publicApi, new HashSet<Class<?>>()));
 
       long counter = this.problemCount.get();
 
@@ -328,91 +311,7 @@ public class AnalyzeMojo extends AbstractMojo {
     }
   }
 
-  private ClassPath getClassPath() throws DependencyResolutionRequiredException, IOException {
-    URL[] urls = project.getCompileClasspathElements().stream().map(input -> {
-      try {
-        return new File(input).toURI().toURL();
-      } catch (MalformedURLException e) {
-        throw new IllegalArgumentException("Unable to convert string (" + input + ") to URL", e);
-      }
-    }).collect(Collectors.toList()).toArray(new URL[0]);
-    return ClassPath.from(new URLClassLoader(urls, null));
-  }
-
-  private Annotation[] getAnnotations(ClassInfo classInfo) {
-    if (includeAnnotationsPs.isEmpty() && excludeAnnotationsPs.isEmpty()) {
-      return new Annotation[0];
-    }
-    // ignore annotations from java itself, to avoid ClassNotFoundExceptions
-    String name = classInfo.getName();
-    return (name.startsWith("com.sun") || name.startsWith("java.")) ? new Annotation[0]
-        : classInfo.load().getDeclaredAnnotations();
-  }
-
-  /**
-   * Builds the set of Types that are in the public API.
-   */
-  private void buildPublicSet(ClassPath classPath, List<Class<?>> publicApiClasses,
-      TreeSet<String> publicSet) {
-    classLoop: for (ClassInfo classInfo : classPath.getAllClasses()) {
-
-      // Do this check before possibly attempting any annotation checks as these require class
-      // loading. If the class is excluded by a pattern, then no need to load class.
-      if (excludesPs.anyMatch(classInfo.getName())) {
-        continue;
-      }
-
-      Annotation[] annotations = getAnnotations(classInfo);
-      for (Annotation annotation : annotations) {
-        if (includeAnnotationsPs.anyMatch(annotation.toString())) {
-          if (!annotationExcludes(annotations)) {
-            addPublicApiType(publicApiClasses, publicSet, classInfo);
-          }
-          continue classLoop;
-        }
-      }
-
-      if (includesPs.anyMatch(classInfo.getName()) && !annotationExcludes(annotations)) {
-        addPublicApiType(publicApiClasses, publicSet, classInfo);
-      }
-    }
-  }
-
-  private void addPublicApiType(List<Class<?>> publicApiClasses, TreeSet<String> publicSet,
-      ClassInfo classInfo) {
-    Class<?> clazz = classInfo.load();
-    if (ClassUtils.isPublicOrProtected(clazz) && !publicSet.contains(clazz.getName())) {
-      publicApiClasses.add(clazz);
-      publicSet.add(clazz.getName());
-
-      addPublicInnerClasses(publicApiClasses, publicSet, clazz);
-    }
-  }
-
-  private void addPublicInnerClasses(List<Class<?>> publicApiClasses, TreeSet<String> publicSet,
-      Class<?> clazz) {
-
-    Class<?>[] innerClasses = clazz.getDeclaredClasses();
-    for (Class<?> ic : innerClasses) {
-      // If a class is in the Public API then all of its public inner class are also considered
-      // to be in the public API unless explicitly excluded.
-      if (ClassUtils.isPublicOrProtected(ic) && !publicSet.contains(ic.getName())
-          && !annotationExcludes(ic.getDeclaredAnnotations())
-          && !excludesPs.anyMatch(ic.getName())) {
-        publicApiClasses.add(ic);
-        publicSet.add(ic.getName());
-
-        addPublicInnerClasses(publicApiClasses, publicSet, ic);
-      }
-    }
-  }
-
-  private boolean annotationExcludes(Annotation[] annotations) {
-    return !excludeAnnotationsPs.isEmpty() && Arrays.stream(annotations)
-        .anyMatch(annotation -> excludeAnnotationsPs.anyMatch(annotation.toString()));
-  }
-
-  private boolean isOk(Set<String> publicSet, Class<?> clazz) {
+  private boolean isOk(PublicApi publicApi, Class<?> clazz) {
 
     while (clazz.isArray()) {
       clazz = clazz.getComponentType();
@@ -424,7 +323,7 @@ public class AnalyzeMojo extends AbstractMojo {
 
     String fqName = clazz.getName();
 
-    if (publicSet.contains(fqName)) {
+    if (publicApi.contains(fqName)) {
       return true;
     }
 
@@ -440,12 +339,7 @@ public class AnalyzeMojo extends AbstractMojo {
     return false;
   }
 
-  private void checkClass(Class<?> clazz, Set<String> publicSet, PrintStream out) {
-    checkClass(clazz, publicSet, out, new HashSet<Class<?>>());
-  }
-
-  private boolean checkClass(Class<?> clazz, Set<String> publicSet, PrintStream out,
-      Set<Class<?>> innerChecked) {
+  private boolean checkClass(Class<?> clazz, PublicApi publicApi, Set<Class<?>> innerChecked) {
 
     boolean ok = true;
 
@@ -463,12 +357,12 @@ public class AnalyzeMojo extends AbstractMojo {
       }
 
       if (!field.getDeclaringClass().getName().equals(clazz.getName())
-          && isOk(publicSet, field.getDeclaringClass())) {
+          && isOk(publicApi, field.getDeclaringClass())) {
         continue;
       }
 
-      if (!isOk(publicSet, field.getType())) {
-        apilyzer.problemReporter().field(out, clazz, field);
+      if (!isOk(publicApi, field.getType())) {
+        apilyzer.problemReporter().field(clazz, field);
         ok = false;
       }
     }
@@ -486,16 +380,16 @@ public class AnalyzeMojo extends AbstractMojo {
 
       Class<?>[] params = constructor.getParameterTypes();
       for (Class<?> param : params) {
-        if (!isOk(publicSet, param)) {
-          apilyzer.problemReporter().constructorParameter(out, clazz, param);
+        if (!isOk(publicApi, param)) {
+          apilyzer.problemReporter().constructorParameter(clazz, param);
           ok = false;
         }
       }
 
       Class<?>[] exceptions = constructor.getExceptionTypes();
       for (Class<?> exception : exceptions) {
-        if (!isOk(publicSet, exception)) {
-          apilyzer.problemReporter().constructorException(out, clazz, exception);
+        if (!isOk(publicApi, exception)) {
+          apilyzer.problemReporter().constructorException(clazz, exception);
           ok = false;
         }
       }
@@ -512,27 +406,27 @@ public class AnalyzeMojo extends AbstractMojo {
       }
 
       if (!method.getDeclaringClass().getName().equals(clazz.getName())
-          && isOk(publicSet, method.getDeclaringClass())) {
+          && isOk(publicApi, method.getDeclaringClass())) {
         continue;
       }
 
-      if (!isOk(publicSet, method.getReturnType())) {
-        apilyzer.problemReporter().methodReturn(out, clazz, method);
+      if (!isOk(publicApi, method.getReturnType())) {
+        apilyzer.problemReporter().methodReturn(clazz, method);
         ok = false;
       }
 
       Class<?>[] params = method.getParameterTypes();
       for (Class<?> param : params) {
-        if (!isOk(publicSet, param)) {
-          apilyzer.problemReporter().methodParameter(out, clazz, method, param);
+        if (!isOk(publicApi, param)) {
+          apilyzer.problemReporter().methodParameter(clazz, method, param);
           ok = false;
         }
       }
 
       Class<?>[] exceptions = method.getExceptionTypes();
       for (Class<?> exception : exceptions) {
-        if (!isOk(publicSet, exception)) {
-          apilyzer.problemReporter().methodException(out, clazz, method, exception);
+        if (!isOk(publicApi, exception)) {
+          apilyzer.problemReporter().methodException(clazz, method, exception);
           ok = false;
         }
       }
@@ -550,14 +444,13 @@ public class AnalyzeMojo extends AbstractMojo {
         continue;
       }
 
-      if (excludesPs.anyMatch(class1.getName())
-          || annotationExcludes(class1.getDeclaredAnnotations())) {
+      if (publicApi.excludes(class1)) {
         // this inner class is explicitly excluded from API so do not check it
         continue;
       }
 
-      if (!isOk(publicSet, class1) && !checkClass(class1, publicSet, out, innerChecked)) {
-        apilyzer.problemReporter().innerClass(out, clazz, class1);
+      if (!isOk(publicApi, class1) && !checkClass(class1, publicApi, innerChecked)) {
+        apilyzer.problemReporter().innerClass(clazz, class1);
         ok = false;
       }
     }

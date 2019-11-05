@@ -14,7 +14,6 @@
 
 package net.revelc.code.apilyzer.problems;
 
-import java.io.PrintStream;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.function.Consumer;
@@ -30,8 +29,7 @@ public class ProblemReporter {
   /**
    * Report a problem with a constructor exception's type.
    */
-  public void constructorException(PrintStream out, Class<?> contextClass,
-      Class<?> nonPublicException) {
+  public void constructorException(Class<?> contextClass, Class<?> nonPublicException) {
     Problem p =
         new Problem(ProblemType.CTOR_EXCEPTION, contextClass, "(...) throws", nonPublicException);
     consumer.accept(p);
@@ -40,8 +38,7 @@ public class ProblemReporter {
   /**
    * Report a problem with a constructor parameter's type.
    */
-  public void constructorParameter(PrintStream out, Class<?> contextClass,
-      Class<?> nonPublicParam) {
+  public void constructorParameter(Class<?> contextClass, Class<?> nonPublicParam) {
     Problem p = new Problem(ProblemType.CTOR_PARAM, contextClass, "(...)", nonPublicParam);
     consumer.accept(p);
   }
@@ -49,7 +46,7 @@ public class ProblemReporter {
   /**
    * Report a problem with a field's type.
    */
-  public void field(PrintStream out, Class<?> contextClass, Field field) {
+  public void field(Class<?> contextClass, Field field) {
     Problem p = new Problem(ProblemType.FIELD, contextClass, field.getName(), field.getType());
     consumer.accept(p);
   }
@@ -57,7 +54,7 @@ public class ProblemReporter {
   /**
    * Report a problem within an inner class.
    */
-  public void innerClass(PrintStream out, Class<?> contextClass, Class<?> nonPublicType) {
+  public void innerClass(Class<?> contextClass, Class<?> nonPublicType) {
     Problem p = new Problem(ProblemType.INNER_CLASS, contextClass, "N/A", nonPublicType);
     consumer.accept(p);
   }
@@ -65,8 +62,7 @@ public class ProblemReporter {
   /**
    * Report a problem with a method's exception type.
    */
-  public void methodException(PrintStream out, Class<?> contextClass, Method method,
-      Class<?> nonPublicException) {
+  public void methodException(Class<?> contextClass, Method method, Class<?> nonPublicException) {
     Problem p = new Problem(ProblemType.METHOD_EXCEPTION, contextClass,
         method.getName() + "(...) throws", nonPublicException.getClass());
     consumer.accept(p);
@@ -75,8 +71,7 @@ public class ProblemReporter {
   /**
    * Report a problem with a method parameter's type.
    */
-  public void methodParameter(PrintStream out, Class<?> contextClass, Method method,
-      Class<?> nonPublicParam) {
+  public void methodParameter(Class<?> contextClass, Method method, Class<?> nonPublicParam) {
     Problem p = new Problem(ProblemType.METHOD_PARAM, contextClass, method.getName() + "(...)",
         nonPublicParam);
     consumer.accept(p);
@@ -85,7 +80,7 @@ public class ProblemReporter {
   /**
    * Report a problem with a method's return type.
    */
-  public void methodReturn(PrintStream out, Class<?> contextClass, Method method) {
+  public void methodReturn(Class<?> contextClass, Method method) {
     Problem p = new Problem(ProblemType.METHOD_RETURN, contextClass, method.getName() + "(...)",
         method.getReturnType());
     consumer.accept(p);

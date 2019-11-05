@@ -19,15 +19,15 @@ import java.util.List;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
-class PatternSet {
+public class PatternSet {
   private final List<Pattern> patterns;
 
-  PatternSet(List<String> regexs) {
+  public PatternSet(List<String> regexs) {
     patterns = regexs.isEmpty() ? Collections.emptyList()
         : regexs.stream().map(Pattern::compile).collect(Collectors.toList());
   }
 
-  boolean anyMatch(String input) {
+  public boolean anyMatch(String input) {
     return patterns.stream().anyMatch(p -> p.matcher(input).matches());
   }
 
