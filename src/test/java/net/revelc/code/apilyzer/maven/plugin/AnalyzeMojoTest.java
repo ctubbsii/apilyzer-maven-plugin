@@ -14,24 +14,6 @@
 
 package net.revelc.code.apilyzer.maven.plugin;
 
-import java.util.Collections;
-import java.util.List;
-import java.util.regex.Pattern;
-import java.util.stream.Collectors;
+public class AnalyzeMojoTest {
 
-class PatternSet {
-  private final List<Pattern> patterns;
-
-  PatternSet(List<String> regexs) {
-    patterns = regexs.isEmpty() ? Collections.emptyList()
-        : regexs.stream().map(Pattern::compile).collect(Collectors.toList());
-  }
-
-  boolean anyMatch(String input) {
-    return patterns.stream().anyMatch(p -> p.matcher(input).matches());
-  }
-
-  public boolean isEmpty() {
-    return patterns.isEmpty();
-  }
 }

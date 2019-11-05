@@ -14,8 +14,6 @@
 
 package net.revelc.code.apilyzer.maven.plugin;
 
-import com.google.common.base.Function;
-import com.google.common.collect.Lists;
 import com.google.common.reflect.ClassPath;
 import com.google.common.reflect.ClassPath.ClassInfo;
 import java.io.File;
@@ -38,6 +36,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
+import net.revelc.code.apilyzer.problems.ProblemType;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -73,19 +73,21 @@ public class AnalyzeMojo extends AbstractMojo {
    * protected inner classes are added to the public API definition. If you do not wish for a
    * particular inner class to be in the public API then you can add a more specific exclusion for
    * it. For example could include {@code com.foo.C} and exclude {@code com.foo.C$I1} if the inner
-   * class {@code C$I1} ends up in the API when its not wanted.
+   * class {@code C$I1} ends up in the API when it's not wanted.
    *
    * <p>Example:
    *
    * <pre>
-   * &lt;configuration&gt;
-   * &nbsp;&nbsp;...
-   * &nbsp;&nbsp;&lt;includes&gt;
-   * &nbsp;&nbsp;&nbsp;&nbsp;&lt;include&gt;org[.]apache[.].*&lt;/include&gt;
-   * &nbsp;&nbsp;&nbsp;&nbsp;&lt;include&gt;com[.]example[.]myproject[.].*&lt;/include&gt;
-   * &nbsp;&nbsp;&lt;/includes&gt;
-   * &nbsp;&nbsp;...
-   * &lt;/configuration&gt;
+   * {@code
+   * <configuration>
+   *   ...
+   *   <includes>
+   *     <include>org[.]apache[.].*</include>
+   *     <include>com[.]example[.]myproject[.].*</include>
+   *   </includes>
+   *   ...
+   * </configuration>
+   * }
    * </pre>
    *
    * @since 1.0.0
@@ -101,13 +103,15 @@ public class AnalyzeMojo extends AbstractMojo {
    * <p>Example:
    *
    * <pre>
-   * &lt;configuration&gt;
-   * &nbsp;&nbsp;...
-   * &nbsp;&nbsp;&lt;excludes&gt;
-   * &nbsp;&nbsp;&nbsp;&nbsp;&lt;exclude&gt;.*[.]impl[.].*&lt;/exclude&gt;
-   * &nbsp;&nbsp;&lt;/excludes&gt;
-   * &nbsp;&nbsp;...
-   * &lt;/configuration&gt;
+   * {@code
+   * <configuration>
+   *   ...
+   *   <excludes>
+   *     <exclude>.*[.]impl[.].*</exclude>
+   *   </excludes>
+   *   ...
+   * </configuration>
+   * }
    * </pre>
    *
    * @since 1.0.0
@@ -126,13 +130,15 @@ public class AnalyzeMojo extends AbstractMojo {
    * <p>Example:
    *
    * <pre>
-   * &lt;configuration&gt;
-   * &nbsp;&nbsp;...
-   * &nbsp;&nbsp;&lt;allows&gt;
-   * &nbsp;&nbsp;&nbsp;&nbsp;&lt;allow&gt;com[.]google[.]common[.].*&lt;/allow&gt;
-   * &nbsp;&nbsp;&lt;/allows&gt;
-   * &nbsp;&nbsp;...
-   * &lt;/configuration&gt;
+   * {@code
+   * <configuration>
+   *   ...
+   *   <allows>
+   *     <allow>com[.]google[.]common[.].*</allow>
+   *   </allows>
+   *   ...
+   * </configuration>
+   * }
    * </pre>
    *
    * @since 1.0.0
@@ -198,15 +204,15 @@ public class AnalyzeMojo extends AbstractMojo {
    * <p>Example:
    *
    * <pre>
-   * &lt;configuration&gt;
-   *   ....
-   *   &lt;includeAnnotations&gt;
-   *     &lt;include&gt;
-   *       [@]com[.]proj42[.]Public.*
-   *     &lt;/include&gt;
-   *   &lt;/includeAnnotations&gt;
-   *   .....
-   * &lt;/configuration&gt;
+   * {@code
+   * <configuration>
+   *   ...
+   *   <includeAnnotations>
+   *     <include>[@]com[.]proj42[.]Public.*</include>
+   *   </includeAnnotations>
+   *   ...
+   * </configuration>
+   * }
    * </pre>
    *
    * @since 1.1.0
@@ -221,15 +227,15 @@ public class AnalyzeMojo extends AbstractMojo {
    * <p>Example:
    *
    * <pre>
-   * &lt;configuration&gt;
-   *   ....
-   *   &lt;excludeAnnotations&gt;
-   *     &lt;exclude&gt;
-   *       [@]com[.]proj42[.]Alpha.*
-   *     &lt;/exclude&gt;
-   *   &lt;/excludeAnnotations&gt;
-   *   .....
-   * &lt;/configuration&gt;
+   * {@code
+   * <configuration>
+   *   ...
+   *   <excludeAnnotations>
+   *     <exclude>[@]com[.]proj42[.]Alpha.*</exclude>
+   *   </excludeAnnotations>
+   *   ...
+   * </configuration>
+   * }
    * </pre>
    *
    * @see AnalyzeMojo#includeAnnotations
@@ -319,39 +325,25 @@ public class AnalyzeMojo extends AbstractMojo {
     }
   }
 
-  private static enum ProblemType {
-    INNER_CLASS, METHOD_PARAM, METHOD_RETURN, FIELD, CTOR_PARAM, CTOR_EXCEPTION, METHOD_EXCEPTION
-  }
-
   private ClassPath getClassPath() throws DependencyResolutionRequiredException, IOException {
-    ClassLoader cl;
-    List<URL> urls =
-        Lists.transform(project.getCompileClasspathElements(), new Function<String, URL>() {
-          @Override
-          public URL apply(String input) {
-            try {
-              return new File(input).toURI().toURL();
-            } catch (MalformedURLException e) {
-              throw new IllegalArgumentException("Unable to convert string (" + input + ") to URL",
-                  e);
-            }
-          }
-        });
-    cl = new URLClassLoader(urls.toArray(new URL[0]), null);
-    return ClassPath.from(cl);
+    URL[] urls = project.getCompileClasspathElements().stream().map(input -> {
+      try {
+        return new File(input).toURI().toURL();
+      } catch (MalformedURLException e) {
+        throw new IllegalArgumentException("Unable to convert string (" + input + ") to URL", e);
+      }
+    }).collect(Collectors.toList()).toArray(new URL[0]);
+    return ClassPath.from(new URLClassLoader(urls, null));
   }
 
   private Annotation[] getAnnotations(ClassInfo classInfo) {
-    if (classInfo.getName().startsWith("com.sun") || classInfo.getName().startsWith("java.")) {
-      // was getting class not found exceptions when trying to get annotations for com.sun class...
+    if (includeAnnotationsPs.isEmpty() && excludeAnnotationsPs.isEmpty()) {
       return new Annotation[0];
     }
-
-    return getAnnotations(classInfo.load());
-  }
-
-  private Annotation[] getAnnotations(Class<?> clazz) {
-    return clazz.getDeclaredAnnotations();
+    // ignore annotations from java itself, to avoid ClassNotFoundExceptions
+    String name = classInfo.getName();
+    return (name.startsWith("com.sun") || name.startsWith("java.")) ? new Annotation[0]
+        : classInfo.load().getDeclaredAnnotations();
   }
 
   /**
@@ -363,19 +355,13 @@ public class AnalyzeMojo extends AbstractMojo {
 
       // Do this check before possibly attempting any annotation checks as these require class
       // loading. If the class is excluded by a pattern, then no need to load class.
-      if (patternExcludes(classInfo)) {
+      if (excludesPs.anyMatch(classInfo.getName())) {
         continue;
       }
 
-      Annotation[] annotations;
-      if (includeAnnotationsPs.size() > 0 || excludeAnnotationsPs.size() > 0) {
-        annotations = getAnnotations(classInfo);
-      } else {
-        annotations = new Annotation[0];
-      }
-
+      Annotation[] annotations = getAnnotations(classInfo);
       for (Annotation annotation : annotations) {
-        if (includeAnnotationsPs.matchesAny(annotation.toString())) {
+        if (includeAnnotationsPs.anyMatch(annotation.toString())) {
           if (!annotationExcludes(annotations)) {
             addPublicApiType(publicApiClasses, publicSet, classInfo);
           }
@@ -383,7 +369,7 @@ public class AnalyzeMojo extends AbstractMojo {
         }
       }
 
-      if (includesPs.matchesAny(classInfo.getName()) && !annotationExcludes(annotations)) {
+      if (includesPs.anyMatch(classInfo.getName()) && !annotationExcludes(annotations)) {
         addPublicApiType(publicApiClasses, publicSet, classInfo);
       }
     }
@@ -407,8 +393,9 @@ public class AnalyzeMojo extends AbstractMojo {
     for (Class<?> ic : innerClasses) {
       // If a class is in the Public API then all of its public inner class are also considered
       // to be in the public API unless explicitly excluded.
-      if (isPublicOrProtected(ic) && !publicSet.contains(ic.getName()) && !annotationExcludes(ic)
-          && !patternExcludes(ic)) {
+      if (isPublicOrProtected(ic) && !publicSet.contains(ic.getName())
+          && !annotationExcludes(ic.getDeclaredAnnotations())
+          && !excludesPs.anyMatch(ic.getName())) {
         publicApiClasses.add(ic);
         publicSet.add(ic.getName());
 
@@ -417,42 +404,9 @@ public class AnalyzeMojo extends AbstractMojo {
     }
   }
 
-  private boolean patternExcludes(ClassInfo classInfo) {
-    return excludesPs.matchesAny(classInfo.getName());
-  }
-
-  private boolean patternExcludes(Class<?> clazz) {
-    return excludesPs.matchesAny(clazz.getName());
-  }
-
   private boolean annotationExcludes(Annotation[] annotations) {
-    if (excludeAnnotationsPs.size() == 0) {
-      return false;
-    }
-
-    for (Annotation annotation : annotations) {
-      if (excludeAnnotationsPs.matchesAny(annotation.toString())) {
-        return true;
-      }
-    }
-
-    return false;
-  }
-
-  private boolean annotationExcludes(Class<?> clazz) {
-    if (excludeAnnotationsPs.size() == 0) {
-      return false;
-    }
-
-    Annotation[] annotations = getAnnotations(clazz);
-
-    for (Annotation annotation : annotations) {
-      if (excludeAnnotationsPs.matchesAny(annotation.toString())) {
-        return true;
-      }
-    }
-
-    return false;
+    return !excludeAnnotationsPs.isEmpty() && Arrays.stream(annotations)
+        .anyMatch(annotation -> excludeAnnotationsPs.anyMatch(annotation.toString()));
   }
 
   private boolean isOk(Set<String> publicSet, Class<?> clazz) {
@@ -476,7 +430,7 @@ public class AnalyzeMojo extends AbstractMojo {
       return true;
     }
 
-    if (allowsPs.matchesAny(fqName)) {
+    if (allowsPs.anyMatch(fqName)) {
       return true;
     }
 
@@ -639,7 +593,8 @@ public class AnalyzeMojo extends AbstractMojo {
         continue;
       }
 
-      if (patternExcludes(class1) || annotationExcludes(class1)) {
+      if (excludesPs.anyMatch(class1.getName())
+          || annotationExcludes(class1.getDeclaredAnnotations())) {
         // this inner class is explicitly excluded from API so do not check it
         continue;
       }
