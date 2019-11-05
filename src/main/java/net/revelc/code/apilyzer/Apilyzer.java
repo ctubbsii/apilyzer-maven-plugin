@@ -16,11 +16,18 @@ package net.revelc.code.apilyzer;
 
 import java.util.function.Consumer;
 import net.revelc.code.apilyzer.problems.Problem;
+import net.revelc.code.apilyzer.problems.ProblemReporter;
 
 public class Apilyzer {
 
-  public Apilyzer(Consumer<Problem> problemConsumer) {
+  private final ProblemReporter problemReporter;
 
+  public Apilyzer(Consumer<Problem> problemConsumer) {
+    problemReporter = new ProblemReporter(problemConsumer);
+  }
+
+  public ProblemReporter problemReporter() {
+    return problemReporter;
   }
 
 }

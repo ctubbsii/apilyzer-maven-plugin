@@ -24,7 +24,6 @@ import java.lang.annotation.Annotation;
 import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
-import java.lang.reflect.Modifier;
 import java.net.MalformedURLException;
 import java.net.URL;
 import java.net.URLClassLoader;
@@ -37,7 +36,8 @@ import java.util.Set;
 import java.util.TreeSet;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.stream.Collectors;
-import net.revelc.code.apilyzer.problems.ProblemReporter;
+import net.revelc.code.apilyzer.Apilyzer;
+import net.revelc.code.apilyzer.util.ClassUtils;
 import org.apache.maven.artifact.DependencyResolutionRequiredException;
 import org.apache.maven.plugin.AbstractMojo;
 import org.apache.maven.plugin.MojoExecutionException;
@@ -49,7 +49,7 @@ import org.apache.maven.plugins.annotations.ResolutionScope;
 import org.apache.maven.project.MavenProject;
 
 /**
- * Analyzes declared public API.
+ * Analyzes declared public API in a Maven build.
  */
 @Mojo(name = "analyze", defaultPhase = LifecyclePhase.VERIFY,
     requiresDependencyResolution = ResolutionScope.COMPILE, threadSafe = true)
@@ -94,7 +94,6 @@ public class AnalyzeMojo extends AbstractMojo {
    */
   @Parameter(alias = "includes")
   private List<String> includes = Collections.emptyList();
-  private PatternSet includesPs;
 
   /**
    * The classes to exclude from your public API definition, which may have otherwise matched your
@@ -118,7 +117,6 @@ public class AnalyzeMojo extends AbstractMojo {
    */
   @Parameter(alias = "excludes")
   private List<String> excludes = Collections.emptyList();
-  private PatternSet excludesPs;
 
   /**
    * The additional classes, which are allowed to be referenced in your public API, but are not,
@@ -145,7 +143,6 @@ public class AnalyzeMojo extends AbstractMojo {
    */
   @Parameter(alias = "allows")
   private List<String> allows = Collections.emptyList();
-  private PatternSet allowsPs;
 
   /**
    * Allows skipping execution of this plugin. This may be useful for testing, or if you find that
@@ -219,7 +216,6 @@ public class AnalyzeMojo extends AbstractMojo {
    */
   @Parameter(alias = "includeAnnotations")
   private List<String> includeAnnotations = Collections.emptyList();
-  private PatternSet includeAnnotationsPs;
 
   /**
    * Exclude classes from public API definition using annotation.
@@ -243,11 +239,16 @@ public class AnalyzeMojo extends AbstractMojo {
    */
   @Parameter(alias = "excludeAnnotations")
   private List<String> excludeAnnotations = Collections.emptyList();
-  private PatternSet excludeAnnotationsPs;
 
   private static final String FORMAT = "  %-20s %-60s %-35s %s\n";
   private AtomicLong problemCount = new AtomicLong(0);
-  private ProblemReporter problem;
+  private Apilyzer apilyzer;
+
+  private PatternSet includesPs;
+  private PatternSet excludesPs;
+  private PatternSet allowsPs;
+  private PatternSet includeAnnotationsPs;
+  private PatternSet excludeAnnotationsPs;
 
   @Override
   public void execute() throws MojoFailureException, MojoExecutionException {
@@ -271,7 +272,7 @@ public class AnalyzeMojo extends AbstractMojo {
     }
 
     try (PrintStream out = new PrintStream(new File(outputFile))) {
-      problem = new ProblemReporter(problem -> {
+      apilyzer = new Apilyzer(problem -> {
         problemCount.incrementAndGet();
         out.printf(FORMAT, problem.problemType, problem.contextClass.getName(), problem.memberName,
             problem.nonPublicType.getName());
@@ -293,13 +294,9 @@ public class AnalyzeMojo extends AbstractMojo {
 
       out.println();
       out.println("Public API:");
-      for (String item : publicSet) {
-        out.println("  " + item);
-      }
-
+      publicSet.stream().map(item -> "  " + item).forEach(out::println);
       out.println();
       out.println("Problems : ");
-
       out.println();
       out.printf(FORMAT, "CONTEXT", "TYPE", "FIELD/METHOD", "NON-PUBLIC REFERENCE");
 
@@ -384,7 +381,7 @@ public class AnalyzeMojo extends AbstractMojo {
   private void addPublicApiType(List<Class<?>> publicApiClasses, TreeSet<String> publicSet,
       ClassInfo classInfo) {
     Class<?> clazz = classInfo.load();
-    if (isPublicOrProtected(clazz) && !publicSet.contains(clazz.getName())) {
+    if (ClassUtils.isPublicOrProtected(clazz) && !publicSet.contains(clazz.getName())) {
       publicApiClasses.add(clazz);
       publicSet.add(clazz.getName());
 
@@ -399,7 +396,7 @@ public class AnalyzeMojo extends AbstractMojo {
     for (Class<?> ic : innerClasses) {
       // If a class is in the Public API then all of its public inner class are also considered
       // to be in the public API unless explicitly excluded.
-      if (isPublicOrProtected(ic) && !publicSet.contains(ic.getName())
+      if (ClassUtils.isPublicOrProtected(ic) && !publicSet.contains(ic.getName())
           && !annotationExcludes(ic.getDeclaredAnnotations())
           && !excludesPs.anyMatch(ic.getName())) {
         publicApiClasses.add(ic);
@@ -443,47 +440,6 @@ public class AnalyzeMojo extends AbstractMojo {
     return false;
   }
 
-  // get public and protected fields
-  private List<Field> getFields(Class<?> clazz) {
-    ArrayList<Field> fields = new ArrayList<>(Arrays.asList(clazz.getFields()));
-
-    // TODO need to get superclasses protected fields, deduping on name
-    for (Field f : clazz.getDeclaredFields()) {
-      if ((f.getModifiers() & Modifier.PROTECTED) != 0) {
-        fields.add(f);
-      }
-    }
-
-    return fields;
-  }
-
-  // get public and protected methods
-  private List<Method> getMethods(Class<?> clazz) {
-    ArrayList<Method> methods = new ArrayList<>(Arrays.asList(clazz.getMethods()));
-
-    // TODO need to get superlclasses protected methods, deduping on signature
-    for (Method m : clazz.getDeclaredMethods()) {
-      if ((m.getModifiers() & Modifier.PROTECTED) != 0) {
-        methods.add(m);
-      }
-    }
-
-    return methods;
-  }
-
-  private List<Class<?>> getInnerClasses(Class<?> clazz) {
-    ArrayList<Class<?>> classes = new ArrayList<>(Arrays.asList(clazz.getClasses()));
-
-    // TODO need to get superclasses' protected classes, deduping on name
-    for (Class<?> c : clazz.getDeclaredClasses()) {
-      if ((c.getModifiers() & Modifier.PROTECTED) != 0) {
-        classes.add(c);
-      }
-    }
-
-    return classes;
-  }
-
   private void checkClass(Class<?> clazz, Set<String> publicSet, PrintStream out) {
     checkClass(clazz, publicSet, out, new HashSet<Class<?>>());
   }
@@ -500,7 +456,7 @@ public class AnalyzeMojo extends AbstractMojo {
 
     // TODO check generic type parameters
 
-    for (Field field : getFields(clazz)) {
+    for (Field field : ClassUtils.getFields(clazz)) {
 
       if (ignoreDeprecated && field.isAnnotationPresent(Deprecated.class)) {
         continue;
@@ -512,7 +468,7 @@ public class AnalyzeMojo extends AbstractMojo {
       }
 
       if (!isOk(publicSet, field.getType())) {
-        problem.field(out, clazz, field);
+        apilyzer.problemReporter().field(out, clazz, field);
         ok = false;
       }
     }
@@ -531,7 +487,7 @@ public class AnalyzeMojo extends AbstractMojo {
       Class<?>[] params = constructor.getParameterTypes();
       for (Class<?> param : params) {
         if (!isOk(publicSet, param)) {
-          problem.constructorParameter(out, clazz, param);
+          apilyzer.problemReporter().constructorParameter(out, clazz, param);
           ok = false;
         }
       }
@@ -539,13 +495,13 @@ public class AnalyzeMojo extends AbstractMojo {
       Class<?>[] exceptions = constructor.getExceptionTypes();
       for (Class<?> exception : exceptions) {
         if (!isOk(publicSet, exception)) {
-          problem.constructorException(out, clazz, exception);
+          apilyzer.problemReporter().constructorException(out, clazz, exception);
           ok = false;
         }
       }
     }
 
-    for (Method method : getMethods(clazz)) {
+    for (Method method : ClassUtils.getMethods(clazz)) {
 
       if (method.isSynthetic() || method.isBridge()) {
         continue;
@@ -561,14 +517,14 @@ public class AnalyzeMojo extends AbstractMojo {
       }
 
       if (!isOk(publicSet, method.getReturnType())) {
-        problem.methodReturn(out, clazz, method);
+        apilyzer.problemReporter().methodReturn(out, clazz, method);
         ok = false;
       }
 
       Class<?>[] params = method.getParameterTypes();
       for (Class<?> param : params) {
         if (!isOk(publicSet, param)) {
-          problem.methodParameter(out, clazz, method, param);
+          apilyzer.problemReporter().methodParameter(out, clazz, method, param);
           ok = false;
         }
       }
@@ -576,13 +532,13 @@ public class AnalyzeMojo extends AbstractMojo {
       Class<?>[] exceptions = method.getExceptionTypes();
       for (Class<?> exception : exceptions) {
         if (!isOk(publicSet, exception)) {
-          problem.methodException(out, clazz, method, exception);
+          apilyzer.problemReporter().methodException(out, clazz, method, exception);
           ok = false;
         }
       }
     }
 
-    for (Class<?> class1 : getInnerClasses(clazz)) {
+    for (Class<?> class1 : ClassUtils.getInnerClasses(clazz)) {
 
       if (innerChecked.contains(class1)) {
         continue;
@@ -601,16 +557,12 @@ public class AnalyzeMojo extends AbstractMojo {
       }
 
       if (!isOk(publicSet, class1) && !checkClass(class1, publicSet, out, innerChecked)) {
-        problem.innerClass(out, clazz, class1);
+        apilyzer.problemReporter().innerClass(out, clazz, class1);
         ok = false;
       }
     }
 
     return ok;
-  }
-
-  private boolean isPublicOrProtected(Class<?> clazz) {
-    return (clazz.getModifiers() & (Modifier.PUBLIC | Modifier.PROTECTED)) != 0;
   }
 
 }
